@@ -1,6 +1,6 @@
-# C++ NIO Network Reactor
+# C++ Epoll Reactor Server
 
-A Linux based single threaded, non-blocking TCP server using the epoll and reactor pattern. This project demonstrates modern C++ networking techniques, resource management and event handling.
+A Linux based non-blocking TCP server using the epoll, single threaded event loop and reactor pattern. This project demonstrates modern C++ non-blocking networking techniques, resource management and event handling.
 
 ## Features
 
@@ -67,7 +67,7 @@ Reactor (epoll event loop)
 - **Epoll:** Provides O(1) scalability
 - **Edge-Triggered mode:** Minimize number of system calls
 - **Eventfd:** Safely handles async signals
-- **Avoiding multi-reactor:** Event loop per core is ideal, but adds confusion to this demo 
+- **Avoiding multi-reactor:** Event loop per cpu core is ideal, but adds confusion to this demo 
 - **Avoiding worker thread pool:** Trivial business logic (converts input to uppercase)
 
 
