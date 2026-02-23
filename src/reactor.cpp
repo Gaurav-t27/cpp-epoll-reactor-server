@@ -53,14 +53,16 @@ void Reactor::registerHandler(int fd, uint32_t events, EventHandler handler) {
     ev.events = events;
     ev.data.fd = fd;
     if (epoll_ctl(m_epollFd, EPOLL_CTL_ADD, fd, &ev) == -1) {
-        if(errno == EEXIST) { // Ignore if already registered
+        if(errno == EEXIST) {
             if(epoll_ctl(m_epollFd, EPOLL_CTL_MOD, fd, &ev) == -1) {
                 std::cerr << "Warning: Failed to modify fd " << fd << " in epoll: " << std::strerror(errno) << std::endl;
                 return;
             }
+            // MOD succeeded — fall through to store the handler
+        } else {
+            std::cerr << "Warning: Failed to register fd " << fd << " with epoll: " << std::strerror(errno) << std::endl;
+            return;
         }
-        std::cerr << "Warning: Failed to register fd " << fd << " with epoll: " << std::strerror(errno) << std::endl;
-        return;
     }
     m_handlers[fd] = std::move(handler);
 
@@ -84,7 +86,7 @@ void Reactor::modifyHandler(int fd, uint32_t events) {
 }
 
 void Reactor::run() {
-    const int MAX_EVENTS = 10;
+    const int MAX_EVENTS = 64;
     struct epoll_event events[MAX_EVENTS];
     bool running = true;
 

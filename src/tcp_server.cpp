@@ -39,7 +39,7 @@ void TCPServer::handleNewConnection(int fd) {
     sockaddr_in client_addr{};
     socklen_t client_len = sizeof(client_addr);
     while(true) {
-        int client_fd = accept(fd, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
+        int client_fd = accept4(fd, reinterpret_cast<sockaddr*>(&client_addr), &client_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
         if (client_fd == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // No more incoming connections
@@ -51,17 +51,16 @@ void TCPServer::handleNewConnection(int fd) {
         }
 
         std::unique_ptr<Socket> client_socket = std::make_unique<Socket>(client_fd);
-        client_socket->setNonBlocking();
         
         ClientState state;
         state.socket = std::move(client_socket);
         m_clients[client_fd] = std::move(state);
 
-        m_reactor.registerHandler(client_fd, EPOLLIN|EPOLLET, [this](int cfd, uint32_t events) {
+        m_reactor.registerHandler(client_fd, EPOLLIN|EPOLLRDHUP|EPOLLET, [this](int cfd, uint32_t events) {
             auto it = m_clients.find(cfd);
             if (it == m_clients.end()) return;
 
-            if(events & (EPOLLHUP | EPOLLERR )) {
+            if(events & (EPOLLHUP | EPOLLERR | EPOLLRDHUP)) {
                 std::cerr << "Client fd " << cfd << " closed or error occurred" << std::endl;
                 cleanupClient(cfd);
                 return;
@@ -79,7 +78,7 @@ void TCPServer::handleNewConnection(int fd) {
             
         });
 
-        std::cout << "Accepted new connection, fd: " << client_fd << std::endl;
+        std::cout << "Accepted new connection, fd: " << client_fd << '\n';
     }
 }
 
