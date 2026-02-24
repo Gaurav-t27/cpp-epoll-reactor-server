@@ -26,22 +26,31 @@ class TestReactorServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Start the C++ server before running tests"""
-        # Build path relative to test file
         server_path = os.path.join(os.path.dirname(__file__), "..", "build", "bin", "tcp_server")
-        
+
         if not os.path.exists(server_path):
             raise FileNotFoundError(f"Server executable not found at {server_path}. Please build first.")
-        
+
         cls.server_proc = subprocess.Popen(
             [server_path, str(cls.PORT)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        time.sleep(0.5)  # Give server time to bind
-        
-        # Verify server started
-        if cls.server_proc.poll() is not None:
-            raise RuntimeError("Server failed to start")
+
+        # Poll until the port accepts connections rather than sleeping a fixed amount
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if cls.server_proc.poll() is not None:
+                raise RuntimeError("Server failed to start")
+            try:
+                with socket.create_connection((cls.HOST, cls.PORT), timeout=0.1):
+                    break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            cls.server_proc.kill()
+            cls.server_proc.wait()
+            raise RuntimeError("Server did not become ready within 5 seconds")
     
     @classmethod
     def tearDownClass(cls):
@@ -65,7 +74,7 @@ class TestReactorServer(unittest.TestCase):
 
     def test_1mb_payload(self):
         """Test sending 1MB of data"""
-        large_data = b"X" * (1024 * 1024)
+        large_data = b"x" * (1024 * 1024)
         with socket.create_connection((self.HOST, self.PORT), timeout=10) as sock:
             sock.sendall(large_data)
             
@@ -83,7 +92,7 @@ class TestReactorServer(unittest.TestCase):
     def test_partial_sends(self):
         """Test sending data in small chunks"""
         with socket.create_connection((self.HOST, self.PORT), timeout=5) as sock:
-            msg = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            msg = b"abcdefghijklmnopqrstuvwxyz"
             
             # Send one byte at a time
             for byte in msg:
@@ -102,9 +111,10 @@ class TestReactorServer(unittest.TestCase):
             self.assertEqual(received, msg.upper())
 
     def test_100_concurrent_clients(self):
-        """Test 100 clients for stress testing"""
+        """Test 100 clients concurrently — all must succeed"""
         results = []
-        
+        errors = []
+
         def client_task(client_id):
             try:
                 with socket.create_connection((self.HOST, self.PORT), timeout=10) as sock:
@@ -114,27 +124,55 @@ class TestReactorServer(unittest.TestCase):
                     results.append(data == msg.upper())
             except Exception as e:
                 results.append(False)
-                print(f"Client {client_id} error: {e}")
-        
+                errors.append(f"Client {client_id}: {e}")
+
         threads = [threading.Thread(target=client_task, args=(i,)) for i in range(100)]
         for t in threads:
             t.start()
         for t in threads:
-            t.join(timeout=15)
-        
-        success_rate = sum(results) / len(results) if results else 0
-        self.assertGreater(success_rate, 0.95, f"Success rate: {success_rate:.2%}")
+            t.join()
+
+        self.assertEqual(len(results), 100, "Not all client threads completed")
+        failures = results.count(False)
+        self.assertEqual(failures, 0, f"{failures} clients failed:\n" + "\n".join(errors))
 
     def test_rapid_connect_disconnect(self):
-        """Test rapid connection/disconnection cycles"""
+        """Test rapid connection/disconnection cycles — server must stay alive"""
         for _ in range(100):
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(1)
                 sock.connect((self.HOST, self.PORT))
                 sock.close()
-            except:
+            except OSError:
                 pass
+
+        self.assertIsNone(
+            self.server_proc.poll(),
+            "Server crashed during rapid connect/disconnect"
+        )
+
+
+    def test_backpressure(self):
+        """Slow reader: send 128KB then read slowly — server must not crash or drop data"""
+        data = b"a" * (128 * 1024)  # 128KB, twice the 64KB pause threshold
+
+        with socket.create_connection((self.HOST, self.PORT), timeout=15) as sock:
+            sock.sendall(data)
+
+            received = b""
+            sock.settimeout(10)
+            while len(received) < len(data):
+                chunk = sock.recv(1024)
+                if not chunk:
+                    break
+                received += chunk
+                time.sleep(0.001)  # Slow reader to trigger backpressure
+
+            self.assertEqual(len(received), len(data), "Did not receive all bytes")
+            self.assertEqual(received, data.upper(), "Data was not uppercased correctly")
+
+        self.assertIsNone(self.server_proc.poll(), "Server crashed during backpressure test")
 
 
 if __name__ == "__main__":
