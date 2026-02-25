@@ -23,13 +23,6 @@ endfunction()
 # ============================================================================
 # Core Libraries
 # ============================================================================
-# Automatically gather all source files
-file(GLOB REACTOR_SOURCES
-    socket.cpp
-    reactor.cpp
-    tcp_server.cpp
-)
-
 # Individual component libraries for modularity
 add_reactor_library(socket_lib SOURCES socket.cpp)
 
